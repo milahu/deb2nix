@@ -14,13 +14,6 @@ if [ "$(id -u)" = 0 ]; then
   APT_CONFIG="/etc/apt/apt.conf"
 fi
 
-if ! [ -e "$APT_CONFIG" ]; then
-  apt-init-config
-fi
-
-# set env for all apt commands
-export APT_CONFIG="$APT_CONFIG"
-
 
 
 # the dir_state_lists path is speciied in apt.conf
@@ -79,6 +72,62 @@ function sort_by_string_length() {
   sort -n |
   cut -d' ' -f2-
 }
+
+
+
+# parse arguments
+
+deb_pkg_list=""
+
+args=("$@")
+
+for (( arg_idx = 0; arg_idx < ${#args[@]}; arg_idx++ )); do
+
+  arg="${args[$arg_idx]}"
+
+  case "$arg" in
+
+    -p|--packages)
+      # next args are debian packages
+      #: (( arg_idx++ ))
+      arg_idx=$((arg_idx + 1))
+      for (( ; arg_idx < ${#args[@]}; arg_idx++ )); do
+        arg="${args[$arg_idx]}"
+        if [ "${arg:0:1}" = "-" ]; then
+          # end of package list
+          #: (( arg_idx-- ))
+          arg_idx=$((arg_idx - 1))
+          break
+        fi
+        deb_pkg_list+="$arg"$'\n'
+      done
+      ;;
+
+    *)
+      echo "error: unrecognized argument: ${arg@Q}" >&2
+      exit 1
+      ;;
+
+  esac
+
+done
+
+
+
+if [ -n "$deb_pkg_list" ]; then
+  # filter by package names
+  echo "filtering by debian package names:" $deb_pkg_list >&2
+fi
+
+
+
+if ! [ -e "$APT_CONFIG" ]; then
+  echo "running apt-init-config to create $APT_CONFIG"
+  apt-init-config
+fi
+
+# set env for all apt commands
+export APT_CONFIG="$APT_CONFIG"
 
 
 
@@ -213,7 +262,24 @@ for deb_db_path in "$dir_state_lists"/deb.debian.org_debian_dists_unstable_main_
     #echo "arch $deb_db_arch   pkg $deb_pkg   file $deb_file_path"
 
   done < <(
-    cat "$deb_db_path" | lz4 -d
+
+    if [ -n "$deb_pkg_list" ]; then
+      # filter by package names
+      # one file can be in multiple packages
+      # see also: deb_file_pkg_full
+      grep_script="/("
+      for deb_pkg in $deb_pkg_list; do
+        grep_script+="$deb_pkg|"
+      done
+      # remove the last "|"
+      grep_script="${grep_script:0: -1}"
+      grep_script+=")($|,)"
+      echo "grep script: $grep_script" >&2
+      cat "$deb_db_path" | lz4 -d | grep -E "$grep_script"
+    else
+      cat "$deb_db_path" | lz4 -d
+    fi
+
     #cat "$deb_db_path" | lz4 -d | head -n20
     #cat "$deb_db_path" | lz4 -d | grep '/bzip2$'
 
