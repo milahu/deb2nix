@@ -75,6 +75,12 @@ function sort_by_string_length() {
 
 
 
+function escape_regex_literal() {
+  sed -E 's/[][(){}.+*?^$]/\\&/g'
+}
+
+
+
 # parse arguments
 
 deb_pkg_list=""
@@ -174,6 +180,7 @@ for deb_db_path in "$dir_state_lists"/deb.debian.org_debian_dists_unstable_main_
 
   while read line; do
 
+    # example: bin/bash   shells/bash
     #echo "line: $line"
 
     # example: bin/bash
@@ -203,6 +210,60 @@ for deb_db_path in "$dir_state_lists"/deb.debian.org_debian_dists_unstable_main_
 
         #echo
         #echo "# deb: $deb_pkg"
+
+        files_regex="^("
+
+        for deb_file in $deb_pkg_files; do
+
+          deb_file="/$deb_file"
+          # /usr/ -> /
+          deb_file=${deb_file/\/usr\//\/}
+          echo "deb_file $deb_file" >&2
+
+          files_regex+="$(echo "$deb_file" | escape_regex_literal)|"
+
+        done
+
+        # remove the last "|"
+        files_regex="${files_regex:0: -1}"
+
+        files_regex+=")$"
+
+        echo "files_regex: $files_regex"
+
+        nix_locate_out="$(nix-locate --top-level --regex "$files_regex")"
+
+        echo "nix-locate output:" >&2
+        echo "$nix_locate_out" >&2
+
+        declare -A nix_pkg_list_by_file_path
+
+        while read nix_pkg_name _int _file_type nix_store_path; do
+
+          if
+            echo "$nix_pkg_name" | grep -q "\.out$" ||
+            grep -q -x -F "$nix_pkg_name" custom-default-output-packages.txt
+          then
+            # remove default output suffix
+            nix_pkg_name=${nix_pkg_name%.*}
+          fi
+
+          nix_file_path=/${nix_store_path#*/*/*/*/}
+
+          echo "nix pkg: $nix_pkg_name $nix_file_path"
+
+          nix_pkg_list_by_file_path[$nix_file_path]+="$nix_pkg_name"$'\n'
+
+        done <<< "$nix_locate_out"
+
+        echo TODO sort + filter >&2
+        for nix_file_path in "${!nix_pkg_list_by_file_path}"; do
+          echo "nix_file_path $nix_file_path" >&2
+          nix_pkg_list="${nix_pkg_list_by_file_path[$nix_file_path]}"
+          echo "nix_file_path $nix_file_path: nix_pkg_list" $nix_pkg_list >&2
+        done
+
+        exit 1 # debug
 
         for deb_file in $deb_pkg_files; do
 
@@ -267,15 +328,15 @@ for deb_db_path in "$dir_state_lists"/deb.debian.org_debian_dists_unstable_main_
       # filter by package names
       # one file can be in multiple packages
       # see also: deb_file_pkg_full
-      grep_script="/("
+      deb_pkg_regex="/("
       for deb_pkg in $deb_pkg_list; do
-        grep_script+="$deb_pkg|"
+        deb_pkg_regex+="$deb_pkg|"
       done
       # remove the last "|"
-      grep_script="${grep_script:0: -1}"
-      grep_script+=")($|,)"
-      echo "grep script: $grep_script" >&2
-      cat "$deb_db_path" | lz4 -d | grep -E "$grep_script"
+      deb_pkg_regex="${deb_pkg_regex:0: -1}"
+      deb_pkg_regex+=")($|,)"
+      echo "deb_pkg_regex: $deb_pkg_regex" >&2
+      cat "$deb_db_path" | lz4 -d | grep -E "$deb_pkg_regex"
     else
       cat "$deb_db_path" | lz4 -d
     fi
