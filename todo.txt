@@ -1,0 +1,3 @@
+translate debootstrap calls to configuration.nix files
+map package names with deb2nix
+map postInstall hooks to ... something in nix
